@@ -1,0 +1,287 @@
+layer1, layer2, layer3
+3072,200,10
+lr = 0.1
+batch = 7
+max epoch = 50
+
+The error on the set doesn't seem to optimize - so seems like a bug
+tried to print mid results
+I saw that the weights are becoming very large - so using sigmid instead of relu in the last layer
+see figure 1 to results with 1000 samples from train and 1000 from validation - process seems to not get stuck like before - there was a slight change !
+
+Now testing with batch = 50, max epoch = 10
+Didn't help - seems we are still stuck. I printed the layers' pre non-linear output (i.e. before activation) - seems like the output is exploding !
+
+
+Now feeding only 1 sample and debugging the linear output of the layer2
+USE_DATA_STD_PRE_PROCESS = True
+USED_INIT_METHOD_W = INIT_METHOD.UNIFORM
+USED_INIT_METHOD_B = INIT_METHOD.ZEROES
+O(size) = -150
+
+USE_DATA_STD_PRE_PROCESS = True
+USED_INIT_METHOD_W = INIT_METHOD.GAUSSIAN
+USED_INIT_METHOD_B = INIT_METHOD.ZEROES
+O(size) = -70
+
+USE_DATA_STD_PRE_PROCESS = False
+USED_INIT_METHOD_W = INIT_METHOD.GAUSSIAN
+USED_INIT_METHOD_B = INIT_METHOD.ZEROES
+O(size) = -10 - -20
+
+The the latter ones seems best,
+But when trying to work with it we get some overflow in the exp of the sigmoid in the last layer
+If exchanging this sigmoid with relu, we get negative values in layers which mean the output valishes. we want to see why there are negative outputs - this relates to weight updates.
+
+To debug this in zoom in to system, made batch = 1 and try to see the weight updates in the 1st and 2nd batch. When I debug this I see that wieghts don't update after the 2nd batch.
+
+Taking a close look on the weights pre and post output gave that the delta in the 2nd batch is == 0. investigation reveals that the last layer's delta for the second batch gives 0. this means gradient valishes - so we should work with different activation on last layer - 
+- try to fix sigmoid
+- try to implement softmax
+
+-----------------------------
+I implemented the softmax and also the cross entropy loss
+It seems that we have gradient explosion here: gradient grow large with every epoch with Order of magnitudes.
+This can be seen clear when dropping the learning rate to 0.01.
+So try to have some penalty (like weight decay ?) 
+-----------------------------
+still after adding L2 wieght decay I see problem, 
+We still get big delta - this is because the output in epoch=0,iter=59 is ~ 0, creates divide by zero in cross entropy derivative and we get inf delta !
+Need to solve
+-----------------------------
+I think something happens in the begining which is really bad
+trying to do this on a very basic model
+In a very basic model with onlt 2 weights, I've used 
+
+----------------------------
+debugging a smaller scale problem in order to get intuition:
+tried with a demo data from the web (which supposed to be consistent)
+using:
+layer_widths=[4, 5, 3],
+activation_functions=["relu", "softmax"],
+loss_function="squared_error",
+max_epoch=50,
+learning_rate=0.05,
+weight_decay=0.0001,
+size_of_batch=1
+
+This gives accuracy that gets bigger with time !
+see figure2
+
+Now taking this configuration for the network to our actual problem:
+layer_widths=[3072, 100, 10],
+activation_functions=["relu", "softmax"],
+loss_function="squared_error", #"cross_entropy"
+max_epoch=50,
+learning_rate=0.05,
+weight_decay=0.0001,
+size_of_batch=1
+
+gives better behavior than before prior attempts.
+see figure3
+This was for DEBUG_NUM_OF_LINES_READ_LIMIT = 100
+
+changing the amount of samples to 2000 gives other behavior : performance gets stuck ?
+wieght decay didn't really help
+Trying with batch=1 makes the accuracy go up and then down and get stuck on some other value
+----------------------------------
+
+Now tried to apply weight decay, batch = 50, 2000 data samples from each type (train,valid)
+see figure 5: performace rise slowly -
+
+because of general direction up, want to see what happens when continuing with epoch.
+Now tried doing this for 5000 epochs
+Looks on good direction - has ~98% accuracy for training, ~40% for validation
+See figure6
+----------------------------------
+Now running for all dataset !
+Seem we're in a good spot - see figure7
+The training error seems to very small, the validation accuracy is ~50% - the training accuracy seemed to have grown while validation dropped from about 50+a to 50-a (for some small a). This was while training accuracy was much higher and kept rising into a saturation - so we have overfitting
+
+Now trying additional regularization using input probablistic zeroing.
+When running with 2000 train samples and 2000 validation samples, this made the validation reach 40% (reached ~36% with this scenario) - maybe this can have greater effect if we run with all samples.
+
+To indicate the exact input zeroing probability I tried, in order to get faster approximate feedback, to see with very small number of samples (200) - tried 20% zeroing (Figure8) and 30% zeroing (Figure9). Seems like 20% is better (although I'm not sure this is a good approximation, but this helped get a sense). 
+More attempt to deal with overfitting is try to reduce the hidden layer from 100 to 50 neurons (make a simpler model). Figure10 shows this makes the validation behave better than Figure8-9 - so we'll continue with this. 
+Because I'm not sure these results are representing with 200 samples, I will try to run with all the samples with 25% zeroing
+result: not good, validation is about the same as before(see Figure11-13)
+
+-----------------------------
+Trying to train and validate with 2000 samples each and see effect (not all set in order to reduce time for feedback on attempts).
+I tried:
+- making the model smaller (20 and after 15 neurons on hidden layer)
+- making th weight decay constant stronger
+This didn't help much, event made it a little worse (the ~40% went down to 35-37%)
+-----------------------------
+So I try to go for the smarter model and have stronger regularization
+Trying L1 weight decay regularization
+here we see that overfitting has seem to become slower 
+trying to make the model a little smarter with this (128 neurons in hidden) +
+doing the data aug before data std:
+NOt good ! performance slowly went to train40%, valid30%, went a little higher than went 
+down both to about 30%.
+
+-----------------------------
+
+This arch + parameters:
+
+layer_widths=[3072, 1024, 10], 
+activation_functions=["relu", "sigmoid"],
+loss_function="squared_error",
+max_epoch=3000,
+learning_rate=0.05,
+weight_decay=0.02,
+size_of_batch=32)
+
+USED_DATA_AUGMENTATION_POST_PRE_PROCESS_METHOD = DATA_AUGMENTATION_METHOD.PROPABLISTIC_ZEROIZING
+USED_DATA_AUGMENTATION_IN_PRE_PROCESS_METHOD = DATA_AUGMENTATION_METHOD.NO_AUG#PROPABLISTIC_ZEROIZING
+DATA_PROPABLISTIC_ZEROIZING_PROB_TO_ZERO = 0.3
+
+USED_INIT_METHOD_W = INIT_METHOD.GAUSSIAN #GAUSSIAN
+USED_INIT_METHOD_B = INIT_METHOD.ZEROES
+
+USED_WEIGHT_UPDATE_RULE = WEIGHT_UPDATE_RULE.WEIGHT_DECAY_L2 
+
+
+This has L2 weight decay with 0.02 - stronger than before.
+The result is that overfitting have been reduced (the difference between train and valid is ~10%) but the network doesn't succeed to learn: on full dataset training, it achieves 
+train acc ~40%, valid acc ~30% quite fast (on the first epochs), but stays there - maybe 
+it is stuck in some local area and can't get out from there.
+
+Approaches:
+- go back to the best working configuration so far and try again from there to make it work
+- as the above arch makes overfitting smaller, maybe pay a little aroudnd it to force it to work
+
+
+-----------------------------
+
+In general, the best working configuration so far was 
+
+layer_widths=[3072, 100, 10], 
+activation_functions=["relu", "sigmoid"],
+loss_function="squared_error",
+max_epoch=5000,
+learning_rate=0.05,
+weight_decay=0.02,
+size_of_batch=50)
+
+USED_DATA_AUGMENTATION_POST_PRE_PROCESS_METHOD = DATA_AUGMENTATION_METHOD.PROPABLISTIC_ZEROIZING
+USED_DATA_AUGMENTATION_IN_PRE_PROCESS_METHOD = DATA_AUGMENTATION_METHOD.NO_AUG#PROPABLISTIC_ZEROIZING
+DATA_PROPABLISTIC_ZEROIZING_PROB_TO_ZERO = 0.3
+
+USED_INIT_METHOD_W = INIT_METHOD.GAUSSIAN #GAUSSIAN
+USED_INIT_METHOD_B = INIT_METHOD.ZEROES
+
+USED_WEIGHT_UPDATE_RULE = WEIGHT_UPDATE_RULE.WEIGHT_DECAY_L2 
+
+This makes:
+- when running full dataset, the validation accuaracy rise to ~50% and stop there, from this point the training goes fast to ~100% and thus we have overfitting.
+- when running on smaller dataset (2000), the validation accuaracy rise to ~40% and stop there, from this point the training goes fast to ~100% and thus we have overfitting.
+
+So it seems in this network we learn better from other architectures, but we have overfitting 
+
+-----------------------------------
+
+Trying to see I don't have massive bug: trying to train the above with 
+DATA_PROPABLISTIC_ZEROIZING_PROB_TO_ZERO = 0.9. This makes almost all of data to be filtered during training, so the network is expected to perform worse
+In figure 15 we see that indeed it takes a lot more time to converge.
+However the network still learns in this situation ! and even seem to overfit
+Also see Figure 16: it is a zoom in - seems like the validation curve still goes up 
+(but very slowly)
+
+Now returning the DATA_PROPABLISTIC_ZEROIZING_PROB_TO_ZERO to smaller more reaonable value (=0.4). In order to handle overfitting better:
+- minimizing hidden layer to 64 neurons 
+- increasing weight decay factor to 0.01
+Results:
+see Figure17 (losses), Figure18 (accuracy) 
+It seems that we reach 40% validation and overfitting got smaller so try to work with this and force it to perform better. 
+Note that in loss graph we see that the initial loss is smaller than rest of the epochs,
+it seems that on the first epochs the loss gets bigger fast and then gets smaller but 
+very slowly. Maybe this means we reached some local minima.
+Figure19-20 which zoom in to last 1000+ epochs on validation accuracy, indicate that 
+accuracy doesn't get better - we are stuck around ~40.2%
+ 
+
+I tried the diff:
+layer_widths=[3072, 128, 64, 10],
+activation_functions=["relu", "relu", "sigmoid"],
+This didn't help - we can see clearly in Figure22 an overfitting: the validation accuracy goes down
+
+
+Went back to this configuration:
+
+layer_widths=[3072, 64, 10], #100
+                           activation_functions=["relu", "relu", "sigmoid"],
+                           loss_function="squared_error", #"cross_entropy"
+                           max_epoch=3000,#5000,#50,
+                           learning_rate=0.05,#0.05,
+                           weight_decay=0.01,
+                           size_of_batch=50) #50
+
+DATA_PROPABLISTIC_ZEROIZING_PROB_TO_ZERO = 0.4
+
+USED_INIT_METHOD_W = INIT_METHOD.GAUSSIAN #GAUSSIAN
+USED_INIT_METHOD_B = INIT_METHOD.ZEROES
+
+USED_WEIGHT_UPDATE_RULE = WEIGHT_UPDATE_RULE.WEIGHT_DECAY_L2 
+
+
+Now added dropout with p = 0.5 
+This didn't help get past the 40%, but it seems that validation accuracy grows slowly (very slowly)
+
+Running with more data - running with 5000 from each train/valid -seems that it gets hard for
+system to learn (training and validation accuracy saturate)
+
+There was a mistake with the implementation : dropout was applied to output. Fixed it
+Now, I want to see if this relates to data, running with 5000 from each train/valid + 128 neurons in hidden layer
+to also try to make it easier to learn - results: reaches valid ~41%, train ~50% after hundreds of epochs
+So seems like we reduced the overfit but now it still hard for net to learn. thus making hidden layer = 1024 n's
+and running. Result:
+Model got validation goes up to ~43%, traing ~59% and stay there.
+so this seem like less overfitting but still getting hard to learn
+trying with more data - result :train stops around ~43%, valid stops around ~42%
+For only 100 samples from each train,valid we get overfitting
+The configuration is:
+
+layer_widths=[3072, 1024, 10], #100
+                           activation_functions=["relu", "sigmoid"],
+                           loss_function="squared_error", #"cross_entropy"
+                           max_epoch=1500,#5000,#50,
+                           learning_rate=0.1,#0.05,
+                           weight_decay=0.01,
+                           size_of_batch=50) #50
+# learning control
+USE_DATA_STD_PRE_PROCESS = True
+class DATA_AUGMENTATION_METHOD:
+    NO_AUG = 0
+    PROPABLISTIC_ZEROIZING = 1
+USED_DATA_AUGMENTATION_POST_PRE_PROCESS_METHOD = DATA_AUGMENTATION_METHOD.PROPABLISTIC_ZEROIZING
+USED_DATA_AUGMENTATION_IN_PRE_PROCESS_METHOD = DATA_AUGMENTATION_METHOD.NO_AUG#PROPABLISTIC_ZEROIZING
+DATA_PROPABLISTIC_ZEROIZING_PROB_TO_ZERO = 0.4
+USED_INIT_METHOD_W = INIT_METHOD.GAUSSIAN #GAUSSIAN
+USED_INIT_METHOD_B = INIT_METHOD.ZEROES
+USED_WEIGHT_UPDATE_RULE = WEIGHT_UPDATE_RULE.WEIGHT_DECAY_L2 #WEIGHT_DECAY_L2
+USE_DROPOUT = True
+DROPOUT_PROB = 0.5
+
+
+------------------------------------
+seems like adding layers didn't help so much - maybe because we don't have much data.
+
+----------------------------------------------------
+
+General checks:
+1. my accuracy check works - tested it by printing the last epoch validation results and labels into 2 files, then read directly using python and so how many lines diff. The result was the same as in the NeuralNetWrapper
+2. to verify dropout works, I tested with 100 samples from each train - once with DROPOUT_PROB=05, 0.1 and after 0.01. 
+0.5 - succeeded to overfit (train ~95%, valid ~25%)
+0.1 - was very hard for the model to train (~30%) - Figure 26
+0.01 - was also hard for it - Figure25 
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,7 @@
+it looks like at this point (run#14+):
+- when I make the hidden layer wider the number of epochs for accuracy level decreases
+- when I make the hidden layer wider it runs slower
+Need to stay in the area of 512-1024 nuerons, maybe closer to 512 is better and run more epochs
+-----------------------------
+After running 512 for 1500 epochs, I can say : better run 1024 for 600 epochs
+and maybe better making it bigger 
